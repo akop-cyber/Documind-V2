@@ -11,9 +11,7 @@ class Retriever:
         lexical = self.bm25.search(query)
 
         scores = {}
-        if not sematic and lexical:
-            return []
-        
+    
         for idx , chunk in enumerate(sematic):
             rank = idx + 1
             text = chunk["docs"]
@@ -28,7 +26,7 @@ class Retriever:
 
             scores[text] = scores.get(text , 0) + rrf_score
 
-        sorted_dict = dict(sorted(scores.items(),key=lambda x: x[1]))
+        sorted_dict = dict(sorted(scores.items(),key=lambda x: x[1],reverse= True))
 
         retrieved_results = dict(list(sorted_dict.items()[:self.top_k]))
 
