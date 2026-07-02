@@ -2,11 +2,12 @@ from fastapi import HTTPException, FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from pydantic import Field
 import aiofiles
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
-from huggingface_hub import AsyncInferenceClient
+from huggingface_hub import InferenceClient
 import os
 import uuid
 import json
@@ -22,11 +23,20 @@ embedder = Embedder()
 sessions: dict = {}
 
 MODELS = [
-    "Qwen/Qwen2.5-72B-Instruct",
-    "meta-llama/Llama-3.2-3B-Instruct",
-    "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
-    "mistralai/Mistral-7B-Instruct-v0.3",
-    "HuggingFaceH4/zephyr-7b-beta",
+    ("Qwen/Qwen2.5-72B-Instruct"),
+    ("meta-llama/Meta-Llama-3-8B-Instruct"),
+    ("Qwen/Qwen2.5-7B-Instruct"),
+    ("microsoft/Phi-3-mini-4k-instruct"),
+    ("meta-llama/Llama-3.2-3B-Instruct"),
+    ("deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"),
+    ("mistralai/Mistral-7B-Instruct-v0.3"),
+    ("HuggingFaceH4/zephyr-7b-beta"),
+]
+MODELS = [
+    "meta-llama/Meta-Llama-3-8B-Instruct",
+    "Qwen/Qwen2.5-7B-Instruct",
+    "mistralai/Mistral-7B-Instruct-v0.2",
+    "microsoft/Phi-3-mini-4k-instruct",
 ]
 
 system_prompt = (
@@ -69,7 +79,7 @@ app.add_middleware(
 class ChatRequest(BaseModel):         
     session_id: str
     message: str
-    history: list = []
+    history: list = Field(default_factory=list)
 
 
 @app.post("/upload")
@@ -84,12 +94,12 @@ async def upload_file(file: UploadFile = File(...)):
             await tmp.write(content)
             tmp_path = tmp.name
 
-        extracted_text = await Loader(tmp_path).load()
+        extracted_text = await asyncio.to_thread(Loader(tmp_path).load)
         chunks = await asyncio.to_thread(Chunker(extracted_text).chunk)
-        embedded_chunks = await embedder.embed(chunks)
+        embedded_chunks = await asyncio.to_thread(embedder.embed,chunks)
 
         vector_store = Vectorstore(embedder)
-        await vector_store.add_vectors(embedded_chunks)
+        await asyncio.to_thread(vector_store.add_vectors,embedded_chunks)
 
         bm25 = BM25()
         await asyncio.to_thread(bm25.add, chunks)
@@ -108,7 +118,10 @@ async def upload_file(file: UploadFile = File(...)):
 
 
 @app.post("/chat")
-async def chat(chat_req: ChatRequest):                 
+async def chat(chat_req: ChatRequest):
+    hf_token = os.environ.get("HF_TOKEN")                
+    if not hf_token:
+        raise HTTPException(status_code=500, detail="HF_TOKEN not configured")
     if not chat_req.session_id:
         raise HTTPException(status_code=400, detail="session_id is required")
 
@@ -123,9 +136,11 @@ async def chat(chat_req: ChatRequest):
     context_chunks = await asyncio.to_thread(retriever.retrieve, chat_req.message)
     if not context_chunks:
         async def empty_stream():
-            yield "data: I couldn't find relevant information in the document.\n\n"
+            ymsg = "I couldn't find relevant information in the document."
+            yield f"data: {json.dumps({'token': msg})}\n\n"
             yield "data: [DONE]\n\n"
         return StreamingResponse(empty_stream(), media_type="text/event-stream")
+
 
     context_text = "\n\n".join(context_chunks)
 
@@ -133,86 +148,76 @@ async def chat(chat_req: ChatRequest):
     messages.extend(chat_req.history)
     messages.append({"role": "user", "content": f"Context:\n{context_text}\n\nQuestion: {chat_req.message}"})
 
-    hf_token = os.environ.get("HF_TOKEN")                
-    if not hf_token:
-        raise HTTPException(status_code=500, detail="HF_TOKEN not configured")
+    
 
     async def stream_chat():
-        async def try_model(model: str , timeout: float):
+        async def try_model(model: str, timeout: float):
             try:
-                client = AsyncInferenceClient(model, hf_token)
-                stream = await client.chat_completion(
-                    messages=messages, max_tokens=512, stream=True
+                def sync_call():
+                    client = InferenceClient(model=model, token=hf_token)
+                    stream = client.chat_completion(
+                        messages=messages, max_tokens=512, stream=True
+                    )
+                    first = next(stream)
+                    return (model, stream, first)
+            
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(sync_call), 
+                    timeout=timeout
                 )
-                first = await asyncio.wait_for(stream.__anext__(), timeout=timeout)
-                return (model, stream, first)
-            except Exception:
+                return result
+            except Exception as e:
+                print(f"Model {model} failed: {e}")
                 return None
-    
-    
-        tasks = [asyncio.create_task(try_model(m, timeout=10.0)) for m in MODELS]
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-    
+
         winner = None
-        for t in done:
-            result = await t
-            if result is not None:
-                winner = result
+        tasks = [asyncio.create_task(try_model(m, timeout=50.0)) for m in MODELS]
+    
+        while tasks:
+            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        
+            for t in done:
+                res = t.result()
+                if res is not None:
+                    winner = res
+                    break
+        
+            if winner is not None:
+                for t in pending:
+                    t.cancel()
                 break
-    
-        if winner is None:
-            for t in pending:
-                t.cancel()
         
-            yield "data: [LOADING: Trying to wake up models...]\n\n"
-        
-        
-            tasks2 = [asyncio.create_task(try_model(m, timeout=30.0)) for m in MODELS]
-            done2, pending2 = await asyncio.wait(tasks2, return_when=asyncio.FIRST_COMPLETED)
-        
-            for t in pending2:
-                t.cancel()
-        
-            for t in done2:
-                result = await t
-                if result is not None:
-                    winner = result
-                    break
-    
-        if winner is None:
-            yield "data: [LOADING: Models are taking longer than usual...]\n\n"
-        
-        
-            tasks3 = [asyncio.create_task(try_model(m, timeout=50.0)) for m in MODELS]
-            done3, pending3 = await asyncio.wait(tasks3, return_when=asyncio.FIRST_COMPLETED)
-        
-            for t in pending3:
-                t.cancel()
-        
-            for t in done3:
-                result = await t
-                if result is not None:
-                    winner = result
-                    break
-    
+            tasks = list(pending)
+            if tasks:
+                yield ": keep-alive\n\n"
+                await asyncio.sleep(0.5)
+
         if winner is None:
             yield "data: Sorry, all models are currently unavailable. Please try again later.\n\n"
             yield "data: [DONE]\n\n"
             return
-    
-    
+
         _, stream, first_chunk = winner
-        first_Chunk = first_chunk.choices[0].delta.content
-        if first_Chunk:
-            yield f"data: {json.dumps({'token': first_Chunk})}\n\n"
-        async for chunk in stream:
-            rest = chunk.choices[0].delta.content
-            if rest:
-                yield f"data: {json.dumps({'token': rest})}\n\n"
-        yield "data: [DONE]\n\n"
+    
+        try:
+            first_content = first_chunk.choices[0].delta.content
+            if first_content:
+                yield f"data: {json.dumps({'token': first_content})}\n\n"
+        
+            for chunk in stream:
+                if chunk.choices and len(chunk.choices) > 0:
+                    content = chunk.choices[0].delta.content
+                    if content:
+                        yield f"data: {json.dumps({'token': content})}\n\n"
+                    
+        except Exception as e:
+            print(f"Streaming error: {e}")
+            err_msg = "\n\n[Error: Stream interrupted by model API.]"
+            yield f"data: {json.dumps({'token': err_msg})}\n\n"
+        finally:
+            yield "data: [DONE]\n\n"
 
     return StreamingResponse(stream_chat(), media_type="text/event-stream")
-
 
 if __name__ == "__main__":
     import uvicorn
