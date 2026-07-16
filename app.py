@@ -1,8 +1,7 @@
 from fastapi import HTTPException, FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
-from pydantic import Field
+from pydantic import BaseModel, Field
 import aiofiles
 import asyncio
 from contextlib import asynccontextmanager
@@ -11,7 +10,6 @@ from huggingface_hub import InferenceClient
 import os
 import uuid
 import json
-
 from loader import Loader
 from chunker import Chunker
 from embedder import Embedder
@@ -19,28 +17,24 @@ from bm25 import BM25
 from vector_store import Vectorstore
 from retriever import Retriever
 
+print("done")
+
 embedder = Embedder()
 sessions: dict = {}
 
+print("embedder initialized")
+
 MODELS = [
     ("Qwen/Qwen2.5-72B-Instruct"),
-    ("meta-llama/Meta-Llama-3-8B-Instruct"),
-    ("Qwen/Qwen2.5-7B-Instruct"),
-    ("microsoft/Phi-3-mini-4k-instruct"),
     ("meta-llama/Llama-3.2-3B-Instruct"),
     ("deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"),
     ("mistralai/Mistral-7B-Instruct-v0.3"),
     ("HuggingFaceH4/zephyr-7b-beta"),
 ]
-MODELS = [
-    "meta-llama/Meta-Llama-3-8B-Instruct",
-    "Qwen/Qwen2.5-7B-Instruct",
-    "mistralai/Mistral-7B-Instruct-v0.2",
-    "microsoft/Phi-3-mini-4k-instruct",
-]
 
 system_prompt = (
     "You are a helpful study assistant. Answer the user's question based ONLY on the provided context.\n\n"
+    "if the answer is not contained within the context, respond with: 'I couldn't find relevant information in the document.'\n\n(STRICT)"
     "FORMATTING RULES (STRICT):\n"
     "You MUST format your entire response using valid Markdown.\n"
     "1. Use `##` for main section headings.\n"
@@ -50,7 +44,6 @@ system_prompt = (
     "5. Do not write long paragraphs. Keep points concise."
 )
 
-
 async def cleanup_loop(sessions: dict):
     while True:
         await asyncio.sleep(3600)
@@ -59,15 +52,14 @@ async def cleanup_loop(sessions: dict):
             if sessions[sid]["expires_at"] < now:
                 del sessions[sid]
 
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     task = asyncio.create_task(cleanup_loop(sessions))
     yield
     task.cancel()
 
-
 app = FastAPI(lifespan=lifespan)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -75,150 +67,111 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-class ChatRequest(BaseModel):         
+class ChatRequest(BaseModel):
     session_id: str
     message: str
     history: list = Field(default_factory=list)
-
 
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
-
+    
     tmp_path = None
     try:
         async with aiofiles.tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             content = await file.read()
             await tmp.write(content)
             tmp_path = tmp.name
-
+        
         extracted_text = await asyncio.to_thread(Loader(tmp_path).load)
         chunks = await asyncio.to_thread(Chunker(extracted_text).chunk)
-        embedded_chunks = await asyncio.to_thread(embedder.embed,chunks)
-
+        embedded_chunks = await asyncio.to_thread(embedder.embed, chunks)
+        
         vector_store = Vectorstore(embedder)
-        await asyncio.to_thread(vector_store.add_vectors,embedded_chunks)
-
+        await asyncio.to_thread(vector_store.add_vectors, embedded_chunks)
+        
         bm25 = BM25()
         await asyncio.to_thread(bm25.add, chunks)
-
-        session_id = str(uuid.uuid4())             
+        
+        session_id = str(uuid.uuid4())
         sessions[session_id] = {
             "store": vector_store,
             "bm25": bm25,
             "expires_at": datetime.now() + timedelta(hours=24),
         }
-        return {"message": "PDF indexed successfully!", "session_id": session_id}  
-
+        
+        return {"message": "PDF indexed successfully!", "session_id": session_id}
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
 
 
+
 @app.post("/chat")
 async def chat(chat_req: ChatRequest):
-    hf_token = os.environ.get("HF_TOKEN")                
+    hf_token = os.environ.get("HF_TOKEN")
+    
     if not hf_token:
         raise HTTPException(status_code=500, detail="HF_TOKEN not configured")
+    
     if not chat_req.session_id:
         raise HTTPException(status_code=400, detail="session_id is required")
-
+    
     session = sessions.get(chat_req.session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found or expired")
-
+    
     bm25 = session["bm25"]
     vector_store = session["store"]
     retriever = Retriever(vector_store=vector_store, bm25=bm25)
-
+    
     context_chunks = await asyncio.to_thread(retriever.retrieve, chat_req.message)
+    
     if not context_chunks:
         async def empty_stream():
             ymsg = "I couldn't find relevant information in the document."
-            yield f"data: {json.dumps({'token': msg})}\n\n"
+            yield f"data: {json.dumps({'token': ymsg})}\n\n"
             yield "data: [DONE]\n\n"
         return StreamingResponse(empty_stream(), media_type="text/event-stream")
-
-
+    
     context_text = "\n\n".join(context_chunks)
-
+    
     messages = [{"role": "system", "content": system_prompt}]
     messages.extend(chat_req.history)
     messages.append({"role": "user", "content": f"Context:\n{context_text}\n\nQuestion: {chat_req.message}"})
 
-    
-
-    async def stream_chat():
-        async def try_model(model: str, timeout: float):
+    def stream_chat():
+        success = False  
+        
+        for model in MODELS:
             try:
-                def sync_call():
-                    client = InferenceClient(model=model, token=hf_token)
-                    stream = client.chat_completion(
-                        messages=messages, max_tokens=512, stream=True
-                    )
-                    first = next(stream)
-                    return (model, stream, first)
-            
-                result = await asyncio.wait_for(
-                    asyncio.to_thread(sync_call), 
-                    timeout=timeout
-                )
-                return result
+                client = InferenceClient(model, token=hf_token)
+                for texts in client.chat_completion(messages, max_tokens=512, stream=True):
+                    text = texts.choices[0].delta.content
+                    if text:
+                        success = True
+                        
+                        yield f"data: {json.dumps({'token': text})}\n\n"
+        
+                yield "data: [DONE]\n\n"
+                return
             except Exception as e:
+              
                 print(f"Model {model} failed: {e}")
-                return None
+                continue  
 
-        winner = None
-        tasks = [asyncio.create_task(try_model(m, timeout=50.0)) for m in MODELS]
-    
-        while tasks:
-            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        
-            for t in done:
-                res = t.result()
-                if res is not None:
-                    winner = res
-                    break
-        
-            if winner is not None:
-                for t in pending:
-                    t.cancel()
-                break
-        
-            tasks = list(pending)
-            if tasks:
-                yield ": keep-alive\n\n"
-                await asyncio.sleep(0.5)
+        error_msg = "Sorry, all models are currently unavailable. Try again later."
+        yield f"data: {json.dumps({'token': error_msg})}\n\n"
+        yield "data: [DONE]\n\n"
 
-        if winner is None:
-            yield "data: Sorry, all models are currently unavailable. Please try again later.\n\n"
-            yield "data: [DONE]\n\n"
-            return
-
-        _, stream, first_chunk = winner
-    
-        try:
-            first_content = first_chunk.choices[0].delta.content
-            if first_content:
-                yield f"data: {json.dumps({'token': first_content})}\n\n"
-        
-            for chunk in stream:
-                if chunk.choices and len(chunk.choices) > 0:
-                    content = chunk.choices[0].delta.content
-                    if content:
-                        yield f"data: {json.dumps({'token': content})}\n\n"
-                    
-        except Exception as e:
-            print(f"Streaming error: {e}")
-            err_msg = "\n\n[Error: Stream interrupted by model API.]"
-            yield f"data: {json.dumps({'token': err_msg})}\n\n"
-        finally:
-            yield "data: [DONE]\n\n"
 
     return StreamingResponse(stream_chat(), media_type="text/event-stream")
+            
 
+
+
+    
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=7860)

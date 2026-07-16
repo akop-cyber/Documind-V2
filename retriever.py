@@ -28,6 +28,6 @@ class Retriever:
 
         sorted_dict = dict(sorted(scores.items(),key=lambda x: x[1],reverse= True))
 
-        retrieved_results = dict(list(sorted_dict.items()[:self.top_k]))
+        retrieved_results = dict(list(sorted_dict.items())[:self.top_k])
 
         return retrieved_results
