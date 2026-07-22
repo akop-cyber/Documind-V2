@@ -1,3 +1,13 @@
+---
+title: Documind-V2
+emoji: 🚀
+colorFrom: blue
+colorTo: green
+sdk: docker
+sdk_version: 4.19.0
+app_file: app.py
+pinned: false
+---
 # Documind-V2
 ```⚡ Instant  🧠 Intelligent  📄 Accurate  🔒 Privacy-friendly  🎯 Zero setup ```
 
@@ -44,5 +54,3 @@ Step 2: Done? Yes Done ! nothing else just hop on to the site and start upoading
 DocuMind V2 is being built from scratch with a focus on creating a production-ready RAG pipeline that is faster, smarter, and more powerful than its predecessor.
 
 Stay tuned. 🚀
-
-

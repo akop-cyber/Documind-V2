@@ -17,12 +17,40 @@ from bm25 import BM25
 from vector_store import Vectorstore
 from retriever import Retriever
 
-print("done")
+class K_selecter:
+    def __init__(self, documents, min_final=2, max_final=20):
+        self.documents = documents
+        self.min_final = min_final
+        self.max_final = max_final
+        self.total_chunks = len(documents)
+
+    def initial_k(self) -> int:  # for the sematic and lexical search
+        if self.total_chunks <= 20:
+            base = max(5, int(self.total_chunks * 0.5))
+        elif self.total_chunks <= 50:
+            base = max(8, int(self.total_chunks * 0.35))
+        elif self.total_chunks <= 100:
+            base = max(12, int(self.total_chunks * 0.25))
+        else:
+            base = max(15, int(self.total_chunks * 0.15))
+        return min(base, self.total_chunks)
+
+    def final_k(self) -> int: # for the final rrf
+        if self.total_chunks <= 20:
+            base = max(self.min_final, int(self.total_chunks * 0.3))
+        elif self.total_chunks <= 50:
+            base = max(self.min_final, int(self.total_chunks * 0.15))
+        elif self.total_chunks <= 100:
+            base = max(self.min_final, int(self.total_chunks * 0.1))
+        else:
+            base = max(self.min_final, int(self.total_chunks * 0.06))
+        final = max(self.min_final, min(self.max_final, base))
+        return min(final, self.total_chunks)
 
 embedder = Embedder()
 sessions: dict = {}
 
-print("embedder initialized")
+
 
 MODELS = [
     ("Qwen/Qwen2.5-72B-Instruct"),
@@ -86,12 +114,13 @@ async def upload_file(file: UploadFile = File(...)):
         
         extracted_text = await asyncio.to_thread(Loader(tmp_path).load)
         chunks = await asyncio.to_thread(Chunker(extracted_text).chunk)
+        kselect = K_selecter(chunks)
         embedded_chunks = await asyncio.to_thread(embedder.embed, chunks)
         
-        vector_store = Vectorstore(embedder)
+        vector_store = Vectorstore(embedder,top_k=kselect.initial_k())
         await asyncio.to_thread(vector_store.add_vectors, embedded_chunks)
         
-        bm25 = BM25()
+        bm25 = BM25(top_k=kselect.initial_k())
         await asyncio.to_thread(bm25.add, chunks)
         
         session_id = str(uuid.uuid4())
@@ -99,6 +128,7 @@ async def upload_file(file: UploadFile = File(...)):
             "store": vector_store,
             "bm25": bm25,
             "expires_at": datetime.now() + timedelta(hours=24),
+            "final_k": kselect.final_k()
         }
         
         return {"message": "PDF indexed successfully!", "session_id": session_id}
@@ -124,7 +154,7 @@ async def chat(chat_req: ChatRequest):
     
     bm25 = session["bm25"]
     vector_store = session["store"]
-    retriever = Retriever(vector_store=vector_store, bm25=bm25)
+    retriever = Retriever(vector_store=vector_store, bm25=bm25, top_k=session["final_k"])
     
     context_chunks = await asyncio.to_thread(retriever.retrieve, chat_req.message)
     

@@ -1,5 +1,5 @@
 class Retriever:
-    def __init__(self,vector_store, bm25, top_k = 2,rrf = 60) -> None:
+    def __init__(self,vector_store, bm25, top_k,rrf = 60) -> None:
         self.vector_store = vector_store
         self.bm25 = bm25
         self.top_k = top_k

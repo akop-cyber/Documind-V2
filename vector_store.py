@@ -3,7 +3,7 @@ import pyarrow as pa
 from haystack import Document
 
 class Vectorstore:
-    def __init__(self, embedder, top_k=3) -> None:
+    def __init__(self, embedder, top_k) -> None:
 
         self.db = lancedb.connect("/tmp/data")
 

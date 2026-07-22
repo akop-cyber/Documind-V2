@@ -3,7 +3,7 @@ from haystack.components.retrievers.in_memory import InMemoryBM25Retriever
 from haystack import Document
 
 class BM25:
-    def __init__(self,top_k = 5) -> None:
+    def __init__(self,top_k) -> None:
         self.store = InMemoryDocumentStore()
         self.model = InMemoryBM25Retriever(
             document_store=self.store,
