@@ -1,15 +1,8 @@
----
-title: Documind-V2
-emoji: 🚀
-colorFrom: blue
-colorTo: green
-sdk: docker
-sdk_version: 4.19.0
-app_file: app.py
-pinned: false
----
+
 # Documind-V2
 ```⚡ Instant  🧠 Intelligent  📄 Accurate  🔒 Privacy-friendly  🎯 Zero setup ```
+
+Visit the app: https://documindv2.netlify.app/
 
 Ever opened a PDF Q&A app and had to go through the hassle of creating an account just to ask a single question?
 
@@ -47,10 +40,3 @@ step 1:  Go to the site
 
 Step 2: Done? Yes Done ! nothing else just hop on to the site and start upoading the pdfs and get answers to your question JUST PLUG AND PLAY!
 
-## 🏗️ Project Status
-
-🚧 Currently under active development.
-
-DocuMind V2 is being built from scratch with a focus on creating a production-ready RAG pipeline that is faster, smarter, and more powerful than its predecessor.
-
-Stay tuned. 🚀
