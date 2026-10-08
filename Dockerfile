@@ -33,8 +33,7 @@ RUN python -c "import nltk; nltk.download('punkt'); nltk.download('punkt_tab'); 
 
 COPY . .
 
-# 10. Expose the port Hugging Face Spaces expects
 EXPOSE 7860
 
-# 11. Run your FastAPI app
+
 CMD ["python", "app.py"]
