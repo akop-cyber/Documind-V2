@@ -1,42 +1,28 @@
 
-# Documind-V2
-```⚡ Instant  🧠 Intelligent  📄 Accurate  🔒 Privacy-friendly  🎯 Zero setup ```
+## Documind-V2
+```⚡ Instant  🧠 Intelligent  📄 Accurate  🔒 Privacy-friendly ```
+
+```no-login PDF Q&A designed to remove user friction.```
 
 Visit the app: https://documindv2.netlify.app/
 
-Ever opened a PDF Q&A app and had to go through the hassle of creating an account just to ask a single question?
+Documind V2 is a lightweight Retrieval-Augmented Generation (RAG) application that allows users to chat with their PDFs immediately, without the barriers of account creation, complex dashboards, or paywalls.
 
-Seriously?
+# 🛠️ Technical Highlights
 
-Finally logged in? Great. Now you're greeted with a huge, complicated dashboard full of buttons you don't need.
+Hybrid Retrieval: Combines lexical search (BM25) and semantic search (Vector embeddings via sentence-transformers) for robust context grounding.
+Reciprocal Rank Fusion (RRF): Custom implementation to intelligently merge and rank results from both retrieval methods.
+Multi-Model Failover: Built-in logic to gracefully handle API rate limits or downtime by routing to backup models.
+Frictionless UX: Designed for immediate, single-session use without requiring user authentication.
 
-Found the chat? Nice.
+# 🚀 How to Use
 
-Now you discover that the features you actually wanted are locked behind a paid plan.
+Visit the live application: https://documindv2.netlify.app/
 
-All this... just to ask one question about your own PDF?
+Upload a PDF document.
 
-**Nah.**
+Start asking questions immediately.
 
+# ⚠️ Project Scope & Limitations
 
-To overcome this problem , make your life a little more easier and save you hours of brainstorming in something you dont need to 
-
-** I present you Documind V2 the RAG pipeline based on the Documind but far more efficient far more powerful and the best thing FREE!!! **
-DocuMind V2 is a production-grade **Retrieval-Augmented Generation (RAG)** application that lets you chat with your PDFs instantly.
-
-No accounts.
-
-No subscriptions.
-
-No unnecessary setup.
-
-No complicated UI.
-
-Just **plug and play.**
-
-Steps to use Documind V2-
-
-step 1:  Go to the site
-
-Step 2: Done? Yes Done ! nothing else just hop on to the site and start upoading the pdfs and get answers to your question JUST PLUG AND PLAY!
-
+Note: This is an active learning project optimized for conceptual clarity and demonstration purposes. It utilizes in-memory storage and external API dependencies, making it unsuitable for large-scale, multi-user production deployment.
